@@ -364,6 +364,7 @@ class Layer(object):
         self.precision[accum_t.name] = accum_t
         self.set_attr('accum_t', accum_t.precision)
         self.reuse_factor = self.model.config.get_reuse_factor(self)
+        self.target_cycles = self.model.config.get_target_cycles(self)
 
         layer_config = self.model.config.get_layer_config(self)
         for config_key, config_value in layer_config.items():
@@ -504,6 +505,12 @@ class Layer(object):
         self.weights[name] = var
         self.precision[var.type.name] = var.type
 
+        # Register weights as BRAM if exceeds threshold
+        bramport_size = self.model.config.get_bram_size(self)
+        if(np.prod(data.shape) > bramport_size):
+            var_out = var_name.replace("{index}",str(self.index))
+            self.model.register_bram_variable(var_out,var)
+
     def _default_function_params(self):
         params = {}
         params['config'] = 'config{}'.format(self.index)
@@ -590,11 +597,16 @@ class Reshape(Layer):
 
 class Dense(Layer):
     def initialize(self):
-        shape = [self.attributes['n_out']]
-        dims = ['N_LAYER_{}'.format(self.index)]
+        shape = self.get_input_variable().shape[:]
+        shape[-1] = self.attributes['n_out']
+        if len(shape) > 1:
+            dims = ['N_LAYER_{}_{}'.format(i, self.index) for i in range(1, len(shape) + 1)]
+        else:
+            dims = ['N_LAYER_{}'.format(self.index)]
         compression = self.model.config.get_compression(self)
         if self.model.config.is_resource_strategy(self):
             if self.model.config.backend.name == 'Vivado':
+                self.model.config.backend.set_target_reuse_factor(self)
                 self.model.config.backend.set_closest_reuse_factor(self)
             if compression:
                 self.set_attr('strategy', 'compressed')
@@ -645,13 +657,18 @@ class Conv1D(Layer):
         self.add_output_variable(shape, dims)
         self.add_weights(quantizer = self.get_attr('weight_quantizer'))
         self.add_bias(quantizer = self.get_attr('bias_quantizer'))
+        if len(self.weights['weight'].data.shape) == 2: # This can happen if we assign weights of Dense layer to 1x1 Conv2D
+            self.weights['weight'].data = np.expand_dims(self.weights['weight'].data, axis=0)
+
         if self.model.config.is_resource_strategy(self):
             self.set_attr('strategy', 'resource')
             if self.model.config.backend.name == 'Vivado':
+                self.model.config.backend.set_target_reuse_factor(self)
                 self.model.config.backend.set_closest_reuse_factor(self)
                 self.weights['weight'].data = np.transpose(self.weights['weight'].data, axes=[2, 0, 1]) #(W,C,F) => (F,W,C)
         else:
             self.set_attr('strategy', 'latency')
+        self.set_attr('implementation', self.model.config.get_conv_implementation(self).lower())
 
     def function_cpp(self):
         params = self._default_function_params()
@@ -727,6 +744,8 @@ class SeparableConv1D(Layer):
                 self.weights['pointwise'].data = np.transpose(self.weights['pointwise'].data, axes=[2, 0, 1]) #(W,C,F) => (F,W,C)
         else:
             self.set_attr('strategy', 'latency')
+        self.set_attr('implementation', self.model.config.get_conv_implementation(self).lower())
+        
 
     def function_cpp(self):
         params = self._default_function_params()
@@ -834,9 +853,16 @@ class Conv2D(Layer):
         self.add_output_variable(shape, dims)
         self.add_weights(quantizer=self.get_attr('weight_quantizer'))
         self.add_bias(quantizer=self.get_attr('bias_quantizer'))
+        if len(self.weights['weight'].data.shape) == 2: # This can happen if we assign weights of Dense layer to 1x1 Conv2D
+            self.weights['weight'].data = np.expand_dims(self.weights['weight'].data, axis=(0,1))
+
+        self.set_attr('implementation', self.model.config.get_conv_implementation(self).lower())
+
         if self.model.config.is_resource_strategy(self):
             self.set_attr('strategy', 'resource')
             if self.model.config.backend.name == 'Vivado':
+                # TODO: compute optimized reuse
+                self.model.config.backend.set_target_reuse_factor(self)
                 self.model.config.backend.set_closest_reuse_factor(self)
                 self.weights['weight'].data = np.transpose(self.weights['weight'].data, axes=[3, 0, 1, 2]) #(H,W,C,F) => (F,H,W,C)
         else:
@@ -976,6 +1002,8 @@ class SeparableConv2D(Layer):
                 self.weights['pointwise'].data = np.transpose(self.weights['pointwise'].data, axes=[3, 0, 1, 2]) #(H,W,C,F) => (F,H,W,C)
         else:
             self.set_attr('strategy', 'latency')
+        
+        self.set_attr('implementation', self.model.config.get_conv_implementation(self).lower())
 
     def function_cpp(self):
         params = self._default_function_params()
@@ -1106,6 +1134,8 @@ class DepthwiseConv2D(Conv2D):
                 self.weights['weight'].data = np.transpose(self.weights['weight'].data, axes=[3, 0, 1, 2]) #(H,W,C,F) => (F,H,W,C)
         else:
             self.set_attr('strategy', 'latency')
+        
+        self.set_attr('implementation', self.model.config.get_conv_implementation(self).lower())
 
 class Pooling1D(Layer):
     def initialize(self):
@@ -1117,6 +1147,7 @@ class Pooling1D(Layer):
             dims = ['N_FILT_{}'.format(self.index), 'N_OUTPUTS_{}'.format(self.index)]
         self.add_output_variable(shape, dims)
         self.set_attr('pool_op', self.get_attr('class_name').split('Pooling')[0])
+        self.set_attr('implementation', self.model.config.get_conv_implementation(self).lower())
 
     def function_cpp(self):
         params = self._default_function_params()
@@ -1147,6 +1178,7 @@ class Pooling2D(Layer):
             dims = ['N_FILT_{}'.format(self.index), 'OUT_HEIGHT_{}'.format(self.index), 'OUT_WIDTH_{}'.format(self.index)]
         self.add_output_variable(shape, dims)
         self.set_attr('pool_op', self.get_attr('class_name').split('Pooling')[0])
+        self.set_attr('implementation', self.model.config.get_conv_implementation(self).lower())
 
     def function_cpp(self):
         params = self._default_function_params()
@@ -1380,9 +1412,12 @@ class Merge(Layer):
         assert(len(self.inputs) == 2)
         inp1 = self.get_input_variable(self.inputs[0])
         inp2 = self.get_input_variable(self.inputs[1])
-        shape = inp1.shape
-        assert(inp1.shape == inp2.shape)
-        dims = inp1.dim_names
+        if np.prod(inp2.shape) > np.prod(inp1.shape):
+            shape = inp2.shape
+            dims = inp2.dim_names
+        else:
+            shape = inp1.shape
+            dims = inp1.dim_names
         self.add_output_variable(shape, dims)
 
     def function_cpp(self):
@@ -1400,7 +1435,12 @@ class Merge(Layer):
 
     def config_cpp(self):
         params = self._default_config_params()
-        params['n_elem'] = self.get_input_variable(self.inputs[0]).size_cpp()
+        inp1 = self.get_input_variable(self.inputs[0])
+        inp2 = self.get_input_variable(self.inputs[1])
+        if np.prod(inp2.shape) > np.prod(inp1.shape):
+            params['n_elem'] = inp2.size_cpp()
+        else:
+            params['n_elem'] = inp1.size_cpp()
 
         return self._config_template.format(**params)
 
@@ -1430,6 +1470,7 @@ class Concatenate(Merge):
         inp1 = self.get_input_variable(self.inputs[0])
         inp2 = self.get_input_variable(self.inputs[1])
         axis = self.attributes['axis']
+        if axis > 0: axis -= 1
         shape = inp1.shape[:]
         shape[axis] += inp2.shape[axis]
         rank = len(shape)
@@ -1488,20 +1529,22 @@ class Transpose(Layer):
         inp = self.get_input_variable(self.inputs[0])
         perm = self.get_attr('perm')
         self.set_attr('dim', '{}d'.format(len(inp.shape)))
-        if len(perm) == 4 and perm[0] == 0:
-            perm = [i - 1 for i in perm[1:]]
+        if len(perm) > 3:
+            raise Exception('ERROR: Transpose of tensors with rank > 3 is not yet supported.')
         shape = [inp.shape[i] for i in perm]
-        self.set_attr('perm_str', ','.join([str(i) for i in perm]))
         if len(shape) == 2:
+            self.set_attr('perm_str', ','.join(['0'] + [str(i+1) for i in perm]))
             dims = ['OUT_HEIGHT_{}'.format(self.index), 'OUT_WIDTH_{}'.format(self.index)]
             self.set_attr('depth', 1)
-            self.set_attr('height', shape[0])
-            self.set_attr('width', shape[1])
+            self.set_attr('height', inp.shape[0])
+            self.set_attr('width', inp.shape[1])
         else:
+            shape = [inp.shape[i] for i in perm]
+            self.set_attr('perm_str', ','.join([str(i) for i in perm]))
             dims = ['OUT_DEPTH_{}'.format(self.index), 'OUT_HEIGHT_{}'.format(self.index), 'OUT_WIDTH_{}'.format(self.index)]
-            self.set_attr('depth', shape[0])
-            self.set_attr('height', shape[1])
-            self.set_attr('width', shape[2])
+            self.set_attr('depth', inp.shape[0])
+            self.set_attr('height', inp.shape[1])
+            self.set_attr('width', inp.shape[2])
         self.add_output_variable(shape, dims)
 
     def function_cpp(self):
