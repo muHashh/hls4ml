@@ -379,7 +379,7 @@ pooling_include_list = ['nnet_utils/nnet_pooling.h', 'nnet_utils/nnet_pooling_st
 padding_include_list = ['nnet_utils/nnet_padding.h', 'nnet_utils/nnet_padding_stream.h']
 merge_include_list = ['nnet_utils/nnet_merge.h', 'nnet_utils/nnet_merge_stream.h']
 resize_include_list = ['nnet_utils/nnet_image.h', 'nnet_utils/nnet_image_stream.h']
-transpose_include_list = ['nnet_utils/nnet_array.h']
+transpose_include_list = ['nnet_utils/nnet_array.h', 'nnet_utils/nnet_stream.h']
 garnet_include_list = ['nnet_utils/nnet_garnet.h']
 
 class VivadoBackend(Backend):
