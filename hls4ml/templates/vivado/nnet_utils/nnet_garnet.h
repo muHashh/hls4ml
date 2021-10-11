@@ -174,7 +174,7 @@ namespace nnet {
 
       void add_means_normalized(Means<CONFIG_T, edge_weight_t> const& local) {
         #pragma HLS INLINE
-        // Always called within a pipelined region - no UNROLL needed
+        #pragma HLS UNROLL region
 
         unsigned const log2_unroll_factor = CONFIG_T::n_vertices_width - CONFIG_T::log2_reuse_factor;
         
@@ -356,6 +356,7 @@ namespace nnet {
     )
     {
       #pragma HLS INLINE
+      #pragma HLS UNROLL region
 
      Aggregators:
       for (unsigned ia = 0; ia < CONFIG_T::n_aggregators; ++ia) {
@@ -447,6 +448,7 @@ namespace nnet {
     )
     {
       #pragma HLS INLINE
+      #pragma HLS UNROLL region
 
       typename arrays_T::edge_weight_t edge_weights[CONFIG_T::n_aggregators];
       #pragma HLS ARRAY_PARTITION variable=edge_weights complete
@@ -487,7 +489,7 @@ namespace nnet {
       unsigned const unroll_factor = CONFIG_T::n_vertices >> CONFIG_T::log2_reuse_factor;
 
       Means<CONFIG_T, typename CONFIG_T::edge_weight_aggr_t> means_accum;
-      
+
      VerticesOuter:
       for (unsigned ivv = 0; ivv < CONFIG_T::reuse_factor; ++ivv) {
         #pragma HLS PIPELINE
@@ -499,6 +501,7 @@ namespace nnet {
 
        VerticesInner:
         for (unsigned ir = 0; ir < unroll_factor; ++ir) {
+          #pragma HLS UNROLL
           unsigned iv = ivv * unroll_factor + ir;
 
           if (iv == nvtx)
