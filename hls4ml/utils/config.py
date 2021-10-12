@@ -3,7 +3,6 @@ import json
 
 import hls4ml
 
-import math # From GarNet
 import numpy as np
 import h5py
 import json
@@ -120,7 +119,7 @@ def config_from_keras_model(model, granularity='model', default_precision='ap_fi
     #Define layers to skip because they're not configurable or not converted to HLS
     skip_layers = ['Dropout', 'Flatten', 'Reshape', 'Permute']
     graph_layers = ['GarNet', 'GarNetStack']
-
+    
     #All supported layers
     supported_layers = core_layers + dense_layers + conv_layers + pooling_layers + norm_layers + activation_layers + merge_layers + qkeras_layers + graph_layers + skip_layers
 
@@ -235,6 +234,9 @@ def config_from_keras_model(model, granularity='model', default_precision='ap_fi
             ## Following code copy-pasted from hls4ml.model.hls_layers - can we factor out commonalities between the two modules?
 
             ## Define default precisions for various internal arrays (can be overridden from the config file)
+
+            import math
+
             log2_reuse = int(math.log(default_reuse_factor, 2.))
             n_vertices_width = int(math.log(layer['n_vertices'], 2.))
 
