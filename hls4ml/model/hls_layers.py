@@ -1687,7 +1687,7 @@ class GarNet(Layer):
         int_width = find_minimum_width(data, signed=signed)
 
         if quantize:
-            precision = IntegerPrecisionType(width=int_width, signed=signed)
+            precision = self.get_attr('quantizer').hls_type
         else:
             width = int_width + frac_width
             precision = FixedPrecisionType(width=width, integer=int_width, signed=signed, rounding_mode='AP_RND', saturation_mode='AP_SAT')

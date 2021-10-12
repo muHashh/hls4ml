@@ -1,6 +1,6 @@
 from hls4ml.converters.keras_to_hls import parse_default_keras_layer
 from hls4ml.converters.keras_to_hls import keras_handler
-from hls4ml.converters.keras.core import TernaryQuantizer
+from hls4ml.converters.keras.qkeras import QKerasQuantizer
 
 @keras_handler('GarNet', 'GarNetStack')
 def parse_garnet_layer(keras_layer, input_names, input_shapes, data_reader, config):
@@ -21,8 +21,16 @@ def parse_garnet_layer(keras_layer, input_names, input_shapes, data_reader, conf
     layer['collapse'] = keras_layer['config']['collapse']
     layer['mean_by_nvert'] = keras_layer['config']['mean_by_nvert']
     if keras_layer['config']['quantize_transforms']:
-        layer['quantizer'] = TernaryQuantizer()
-
+        bits = keras_layer['config']['total_bits']
+        int_bits = keras_layer['config']['int_bits']
+        if bits == 1:
+          config = {'class_name' : 'binary', 'config' : {'bits' : bits, 'integer' : int_bits}}
+        elif bits == 2:
+          config = {'class_name' : 'ternary', 'config' : {'bits' : bits, 'integer' : int_bits}}
+        else:
+          config = {'class_name' : 'quantized_bits', 'config' : {'bits' : bits, 'integer' : int_bits}}
+        layer['quantizer'] = QKerasQuantizer(config)
+        
     layer['n_aggregators'] = keras_layer['config']['n_aggregators']
     layer['n_out_features'] = keras_layer['config']['n_filters'] # number of output features
     layer['n_propagate'] = keras_layer['config']['n_propagate'] # number of latent features
